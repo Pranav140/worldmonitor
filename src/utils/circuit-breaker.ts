@@ -51,7 +51,7 @@ export class CircuitBreaker<T> {
   private persistentLoaded = false;
   private persistentLoadPromise: Promise<void> | null = null;
   private lastDataState: BreakerDataState = { mode: 'unavailable', timestamp: null, offline: false };
-  private backgroundRefreshPending = false;
+  private backgroundRefreshPromise: Promise<void> | null = null;
 
   constructor(options: CircuitBreakerOptions) {
     this.name = options.name;
@@ -169,7 +169,7 @@ export class CircuitBreaker<T> {
 
   clearCache(): void {
     this.cache = null;
-    this.backgroundRefreshPending = false;
+    this.backgroundRefreshPromise = null;
     this.persistentLoadPromise = null; // orphan any in-flight hydration
     if (this.persistEnabled) {
       this.deletePersistentCache();
@@ -224,15 +224,14 @@ export class CircuitBreaker<T> {
       this.lastDataState = { mode: 'cached', timestamp: this.cache.timestamp, offline };
       // Fire-and-forget background refresh — guard against concurrent SWR fetches
       // so that multiple callers with stale cache don't each spawn a parallel request.
-      if (!this.backgroundRefreshPending) {
-        this.backgroundRefreshPending = true;
-        fn().then(result => {
+      if (!this.backgroundRefreshPromise) {
+        this.backgroundRefreshPromise = fn().then(result => {
           this.recordSuccess(result);
         }).catch(e => {
           console.warn(`[${this.name}] Background refresh failed:`, e);
           this.recordFailure(String(e));
         }).finally(() => {
-          this.backgroundRefreshPending = false;
+          this.backgroundRefreshPromise = null;
         });
       }
       return this.cache.data as R;
